@@ -20,4 +20,4 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - run: gcc bgmi.c -o bgmi -lpthread
-      - run: sudo ./bgmi 13.71.30.163 11997 200 900
+      - run: sudo ./bgmi 4.247.144.100 23845 200 12
